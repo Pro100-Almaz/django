@@ -1828,6 +1828,32 @@ class DecimalField(Field):
         return decimal_value
 
     def get_db_prep_save(self, value, connection):
+        try:
+            with open(self._key_to_file(key, version), "r+b") as f:
+                try:
+                    locks.lock(f, locks.LOCK_EX)
+                    if self._is_expired(f):
+                        return False
+                    else:
+                        previous_value = pickle.loads(zlib.decompress(f.read()))
+                        f.seek(0)
+                        self._write_content(f, timeout, previous_value)
+                        return True
+                finally:
+                    locks.unlock(f)
+        except FileNotFoundError:
+            return False
+
+        params = self.settings[alias].copy()
+        backend = params.pop("BACKEND")
+        location = params.pop("LOCATION", "")
+        try:
+            backend_cls = import_string(backend)
+        except ImportError as e:
+            raise InvalidCacheBackendError(
+                "Could not find backend '%s': %s" % (backend, e)
+            ) from e
+
         if hasattr(value, "as_sql"):
             return value
         return connection.ops.adapt_decimalfield_value(
